@@ -1,0 +1,46 @@
+# ---- PyTorch (CUDA 12.8) ----
+# 从 PyTorch cu128 源获取带 CUDA 12.8 的二进制；其余包仍走 PyPI
+--extra-index-url https://download.pytorch.org/whl/cu128
+torch
+torchvision
+torchaudio
+
+# ---- Vision / Models ----
+timm==0.9.16
+
+# ---- Math / ML ----
+# 版本适配 PyTorch & Py3.10，尽量避免过旧/过新导致 ABI/编译问题
+numpy>=1.26.4,<3
+scipy>=1.11,<1.14
+scikit-learn>=1.4.2,<1.6
+joblib>=1.4.2
+threadpoolctl>=3.5.0
+
+# ---- Visualization ----
+matplotlib>=3.8,<3.10
+Pillow>=10.3,<11
+cycler==0.12.1
+kiwisolver==1.4.7
+pyparsing==3.1.4
+python-dateutil==2.9.0.post0
+
+# ---- Utils ----
+tqdm==4.66.2
+PyYAML==6.0.1
+termcolor==2.4.0
+six==1.17.0
+typing_extensions>=4.10,<5
+yacs==0.1.8
+wcwidth==0.2.13
+
+# ---- System / GPU monitor ----
+psutil==5.9.8
+nvidia-ml-py==12.535.133
+gpustat==1.1.1
+
+faiss-gpu
+# ---- FAISS 提示 ----
+# faiss-gpu 的 pip 轮子对新 CUDA 经常缺失；建议用 conda 安装（示例）：
+# conda install -n <env> -c pytorch -c nvidia faiss-gpu
+# 如必须用 pip，可临时用 faiss-cpu，或自行编译
+# faiss-cpu==1.7.4

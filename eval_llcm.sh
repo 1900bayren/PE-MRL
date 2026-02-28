@@ -1,0 +1,7 @@
+## RegDB
+#
+python test.py --config_file configs/LLCM/vit_transreid_stride.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_4' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/home/data_4t/ctm/ReID/MIP-master/logs/llcm_WHAT/66.93_53.78_73.24_57.82/transformer_best_59.pth'
+
+# RegDB prior
+
+#python test.py --config_file configs/LLCM/LLCM_adr.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_4' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/root/code/AMaP/logs/llcm_WHAT/67.62_54.32_73.88_58.16/transformer_best_59.pth'

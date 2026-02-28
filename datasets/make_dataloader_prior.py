@@ -1,0 +1,554 @@
+import torch
+import torchvision.transforms as T
+import os
+from torch.utils.data import DataLoader
+
+from .bases import ImageDataset
+from .sampler import RandomIdentitySampler, RandomIdentityModalitySampler
+from .dukemtmcreid import DukeMTMCreID
+from .market1501 import Market1501
+from .msmt17 import MSMT17
+from .sampler_ddp import RandomIdentitySampler_DDP
+import torch.distributed as dist
+from .occ_duke import OCC_DukeMTMCreID
+# from .vehicleid import VehicleID
+# from .veri import VeRi
+from .sysu_mm import SYSU_mm
+from .regdb import RegDB
+from .llcm import LLCM
+from .regdb_p import RegDB_P
+# from .fmy_reid import fmyreid
+# from timm.data.random_erasing import RandomErasing, RandomErasing_ori
+from .ChannelAug import *
+import numpy as np
+try:
+    from timm.data.random_erasing import RandomErasing, RandomErasing_ori
+except ImportError:
+    from timm.data.random_erasing import RandomErasing
+
+    import random
+    import math
+    import torch
+
+
+    class RandomErasing_ori:
+        def __init__(self, probability=0.5, sl=0.02, sh=0.4, r1=0.3,
+                     mean=(0.4914, 0.4822, 0.4465), mode='const', max_count=1, device='cpu'):
+            self.probability = probability
+            self.sl = sl
+            self.sh = sh
+            self.r1 = r1
+            self.mean = mean
+            self.mode = mode
+            self.max_count = max_count
+            self.device = device
+
+        def __call__(self, img):
+            if random.uniform(0, 1) > self.probability:
+                return img
+
+            for _ in range(self.max_count):
+                for _ in range(100):
+                    area = img.size()[1] * img.size()[2]
+                    target_area = random.uniform(self.sl, self.sh) * area
+                    aspect_ratio = random.uniform(self.r1, 1 / self.r1)
+
+                    h = int(round(math.sqrt(target_area * aspect_ratio)))
+                    w = int(round(math.sqrt(target_area / aspect_ratio)))
+
+                    if w < img.size()[2] and h < img.size()[1]:
+                        x1 = random.randint(0, img.size()[1] - h)
+                        y1 = random.randint(0, img.size()[2] - w)
+
+                        if self.mode == 'pixel':
+                            erase_val = torch.randn((img.size(0), h, w), device=self.device)
+                        else:  # const
+                            erase_val = torch.tensor(self.mean, device=self.device)[:, None, None]
+
+                        img[:, x1:x1 + h, y1:y1 + w] = erase_val
+                        break
+            return img
+
+from data.priors import PriorLoaderDual
+
+# 新增一个 collate（保留原 train_collate_fn 不动）
+def train_collate_fn_prior(batch):
+    assert all(len(item) == 7 for item in batch), "Some data points don't return 7 values!"
+    """
+    batch 元素： (img, pid, camid, viewid, filename, modality, prior_vec, prior_kind)
+    """
+    imgs, pids, camids, viewids, img_names, modality_flag, prior_vecs = zip(*batch)
+    pids = torch.tensor(pids, dtype=torch.int64)
+    viewids = torch.tensor(viewids, dtype=torch.int64)
+    camids = torch.tensor(camids, dtype=torch.int64)
+    modality_flag = torch.tensor(modality_flag, dtype=torch.int64)
+    prior_vecs = torch.stack(prior_vecs, dim=0).float()      # (B, padded_dim)
+    return torch.stack(imgs, dim=0), pids, camids, viewids, img_names, modality_flag, prior_vecs
+
+
+__factory = {
+    'market1501': Market1501,
+    'dukemtmc': DukeMTMCreID,
+    'msmt17': MSMT17,
+    'occ_duke': OCC_DukeMTMCreID,
+    'sysu_mm': SYSU_mm,
+    'regdb': RegDB,
+    'llcm': LLCM,
+    'regdb_p': RegDB_P,
+    # 'veri': VeRi,
+    # 'VehicleID': VehicleID,
+    # 'fmyreid': fmyreid
+}
+
+def train_collate_fn(batch):
+    """
+    # collate_fn这个函数的输入就是一个list，list的长度是一个batch size，list中的每个元素都是__getitem__得到的结果
+    """
+    imgs, pids, camids, viewids, _, modality_flag = zip(*batch)
+    pids = torch.tensor(pids, dtype=torch.int64)
+    viewids = torch.tensor(viewids, dtype=torch.int64)
+    camids = torch.tensor(camids, dtype=torch.int64)
+    modality_flag = torch.tensor(modality_flag, dtype=torch.int64)
+    return torch.stack(imgs, dim=0), pids, camids, viewids, modality_flag
+
+def val_collate_fn(batch):
+    imgs, pids, camids, viewids, img_paths, modality_flag = zip(*batch)
+    viewids = torch.tensor(viewids, dtype=torch.int64)
+    camids_batch = torch.tensor(camids, dtype=torch.int64)
+    modality_flag = torch.tensor(modality_flag, dtype=torch.int64)
+    return torch.stack(imgs, dim=0), pids, camids, camids_batch, viewids, modality_flag, img_paths
+
+def get_sampler_(cfg, dataset):
+    random.seed(cfg.DATASETS.SAMPLER_TRIAL)
+    np.random.seed(cfg.DATASETS.SAMPLER_TRIAL)
+    if cfg.DATASETS.SAMPLER == 'normal':
+        sampler_ = RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+    elif cfg.DATASETS.SAMPLER == 'modal':
+        sampler_ = RandomIdentityModalitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+    else:
+        sampler_ = RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+    return sampler_
+
+
+def make_dataloader_prior(cfg):
+    if cfg.INPUT.AUG == 0:
+        train_transforms = T.Compose([
+                T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+                T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+                T.Pad(cfg.INPUT.PADDING),
+                T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+                T.ToTensor(),
+                T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+                RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+                #T.RandomGrayscale(0.5),
+                # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
+            ])
+    elif cfg.INPUT.AUG == 1:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            #T.RandomGrayscale(0.5),
+            # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
+        ])
+    elif cfg.INPUT.AUG == 20:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomGrayscale(0.5),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            #T.RandomGrayscale(0.5),
+            # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
+        ])
+    elif cfg.INPUT.AUG == 2:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.RandomGrayscale(0.5),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
+        ])
+    elif cfg.INPUT.AUG == 3:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.RandomGrayscale(0.5),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            #T.RandomGrayscale(0.5),
+            # RandomErasing(probability=cfg.INPUT.RE_PROB, mean=cfg.INPUT.PIXEL_MEAN)
+        ])
+    elif cfg.INPUT.AUG == 4:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            ChannelRandomErasing(probability = 0.5, mean = [0.5,0.5,0.5]),
+            #ChannelAdapGray(probability =0.5),
+            #ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 5:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            #ChannelRandomErasing(probability = 0.5),
+            ChannelAdapGray(probability =0.5),
+            #ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 6:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            ChannelRandomErasing(probability = 0.5),
+            ChannelAdapGray(probability =0.5),
+            #ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 7:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            ChannelRandomErasing(probability = 0.5),
+            #ChannelAdapGray(probability =0.5),
+            ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 8:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            ChannelRandomErasing(probability = 0.5),
+            ChannelAdapGray(probability =0.5),
+            ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 9:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            ChannelAdapGray(probability =0.5),
+            ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 10:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            ChannelRandomErasing(probability = 0.5, mean = [0.5,0.5,0.5]),
+            ChannelAdapGray(probability =0.5),
+            ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 11:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            ChannelAdapGray(probability =0.5),
+            ChannelExchange(gray = 2),
+        ])
+    elif cfg.INPUT.AUG == 12:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+            ChannelAdapGray(probability =0.5),
+        ])
+    elif cfg.INPUT.AUG == 13:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomGrayscale(0.5),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    elif cfg.INPUT.AUG == 14:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            #T.RandomGrayscale(0.5),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    elif cfg.INPUT.AUG == 15:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            #T.RandomGrayscale(0.5),
+            #T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+			#		        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    elif cfg.INPUT.AUG == 16:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomGrayscale(0.5),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.RandomSolarize(100, p=0.5),
+            #RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.ToTensor(),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    elif cfg.INPUT.AUG == 17:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomGrayscale(0.5),
+            T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+					        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.RandomSolarize(100, p=0.5),
+            T.ToTensor(),
+            RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    elif cfg.INPUT.AUG == 18:
+        train_transforms = T.Compose([
+            T.Resize(cfg.INPUT.SIZE_TRAIN, interpolation=3),
+            T.RandomHorizontalFlip(p=cfg.INPUT.PROB),
+            T.Pad(cfg.INPUT.PADDING),
+            T.RandomCrop(cfg.INPUT.SIZE_TRAIN),
+            T.RandomGrayscale(0.5),
+            #T.RandomChoice([T.ColorJitter(brightness=0.3,contrast=0.3),
+			#		        T.GaussianBlur(21, sigma=(0.1, 3))]),
+            T.ToTensor(),
+            RandomizedQuantizationAugModule(region_num=8, transforms_like=True),
+            T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD),
+            RandomErasing_ori(probability=cfg.INPUT.RE_PROB, mode='pixel', max_count=1, device='cpu'),
+        ])
+    val_transforms = T.Compose([
+        T.Resize(cfg.INPUT.SIZE_TEST),
+        T.ToTensor(),
+        T.Normalize(mean=cfg.INPUT.PIXEL_MEAN, std=cfg.INPUT.PIXEL_STD)
+    ])
+
+    num_workers = cfg.DATALOADER.NUM_WORKERS
+    print(cfg.DATASETS.ROOT_DIR)
+    dataset = __factory[cfg.DATASETS.NAMES](root=cfg.DATASETS.ROOT_DIR)
+
+
+    prior_loader = None
+    print(cfg.DATASETS.NAMES)
+    # physical prior
+    if cfg.DATASETS.NAMES == 'regdb'or cfg.DATASETS.NAMES == 'regdb_p' and getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+        # 准备 RegDB 的 IR / VIS 原图根（与 RegDB 类的目录一致）
+        data_root_ir = os.path.join(dataset.dataset_dir, 'Thermal')
+        data_root_vis = os.path.join(dataset.dataset_dir, 'Visible')
+        # 先验根目录由配置给出（镜像结构）
+        pri_root_ir = cfg.INPUT.PRIORS_ROOT_TRAIN_IR  # e.g. ".../RegDB-priors/Thermal"
+        pri_root_vis = cfg.INPUT.PRIORS_ROOT_TRAIN_VIS  # e.g. ".../RegDB-priors/Visible"
+
+        prior_loader = PriorLoaderDual(
+            data_root_ir=data_root_ir, priors_root_ir=pri_root_ir,
+            data_root_vis=data_root_vis, priors_root_vis=pri_root_vis,
+            prior_dim_ir=cfg.MODEL.PRIOR_DIM_IR,
+            prior_dim_vis=cfg.MODEL.PRIOR_DIM_VIS,
+            strict=False
+        )
+    elif cfg.DATASETS.NAMES == 'llcm' and getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+        print('llcm prior loaded')
+        # 准备 LLCM 的 IR / VIS 原图根（与 RegDB 类的目录一致）
+        data_root_ir = os.path.join(dataset.dataset_dir, 'nir')
+        data_root_vis = os.path.join(dataset.dataset_dir, 'vis')
+        # 先验根目录由配置给出（镜像结构）
+        pri_root_ir = cfg.INPUT.PRIORS_ROOT_TRAIN_IR  
+        pri_root_vis = cfg.INPUT.PRIORS_ROOT_TRAIN_VIS
+
+        prior_loader = PriorLoaderDual(
+            data_root_ir=data_root_ir, priors_root_ir=pri_root_ir,
+            data_root_vis=data_root_vis, priors_root_vis=pri_root_vis,
+            prior_dim_ir=cfg.MODEL.PRIOR_DIM_IR,
+            prior_dim_vis=cfg.MODEL.PRIOR_DIM_VIS,
+            strict=False
+        )
+    elif cfg.DATASETS.NAMES == 'sysu_mm' and getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+        print('sysu prior loaded')
+        # 原图根：SYSU 的所有相机都放在这个根下面
+        data_root_ir = dataset.dataset_dir
+        data_root_vis = dataset.dataset_dir
+
+        # 先验根：与你的离线先验目录保持镜像结构（包含 cam 子目录）
+        # 例如：
+        #   PRIORS_ROOT_TRAIN_IR  / cam3 / xxx.npy
+        #                         / cam6 / xxx.npy
+        #   PRIORS_ROOT_TRAIN_VIS / cam1 / xxx.npy
+        #                         / cam2 / xxx.npy
+        #                         / cam4 / xxx.npy
+        #                         / cam5 / xxx.npy
+        pri_root_ir = cfg.INPUT.PRIORS_ROOT_TRAIN_IR  # e.g. ".../SYSU-MM01-priors/IR"
+        pri_root_vis = cfg.INPUT.PRIORS_ROOT_TRAIN_VIS  # e.g. ".../SYSU-MM01-priors/VIS"
+
+        prior_loader = PriorLoaderDual(
+            data_root_ir=data_root_ir, priors_root_ir=pri_root_ir,
+            data_root_vis=data_root_vis, priors_root_vis=pri_root_vis,
+            prior_dim_ir=cfg.MODEL.PRIOR_DIM_IR,
+            prior_dim_vis=cfg.MODEL.PRIOR_DIM_VIS,
+            strict=False
+        )
+
+
+    train_set = ImageDataset(dataset.train, train_transforms,prior_loader=prior_loader, with_prior=True)
+    train_set_normal = ImageDataset(dataset.train, val_transforms)
+    num_classes = dataset.num_train_pids
+    cam_num = dataset.num_train_cams
+    view_num = dataset.num_train_vids
+
+    if 'triplet' in cfg.DATALOADER.SAMPLER:
+        if cfg.MODEL.DIST_TRAIN:
+            print('DIST_TRAIN START')
+            mini_batch_size = cfg.SOLVER.IMS_PER_BATCH // dist.get_world_size()
+            data_sampler = RandomIdentitySampler_DDP(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE)
+            batch_sampler = torch.utils.data.sampler.BatchSampler(data_sampler, mini_batch_size, True)
+            if getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+                train_loader = torch.utils.data.DataLoader(
+                    train_set,
+                    num_workers=num_workers,
+                    batch_sampler=batch_sampler,
+                    collate_fn=train_collate_fn_prior,
+                    pin_memory=True,
+                )
+            else:
+                train_loader = torch.utils.data.DataLoader(
+                    train_set,
+                    num_workers=num_workers,
+                    batch_sampler=batch_sampler,
+                    collate_fn=train_collate_fn,
+                    pin_memory=True,
+                )
+        else:
+            sampler_ = get_sampler_(cfg, dataset)
+            if getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+                train_loader = DataLoader(
+                    train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH,
+                    #sampler=RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE),
+                    sampler=sampler_,
+                    num_workers=num_workers, collate_fn=train_collate_fn_prior
+                )
+            else:
+                train_loader = DataLoader(
+                    train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH,
+                    # sampler=RandomIdentitySampler(dataset.train, cfg.SOLVER.IMS_PER_BATCH, cfg.DATALOADER.NUM_INSTANCE),
+                    sampler=sampler_,
+                    num_workers=num_workers, collate_fn=train_collate_fn
+                )
+    elif cfg.DATALOADER.SAMPLER == 'softmax':
+        print('using softmax sampler')
+        if getattr(cfg.MODEL, 'USE_PHYS_PRIOR', False):
+            train_loader = DataLoader(
+                train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH, shuffle=True, num_workers=num_workers,
+                collate_fn=train_collate_fn_prior
+            )
+        else:
+            train_loader = DataLoader(
+                train_set, batch_size=cfg.SOLVER.IMS_PER_BATCH, shuffle=True, num_workers=num_workers,
+                collate_fn=train_collate_fn
+            )
+    else:
+        print('unsupported sampler! expected softmax or triplet but got {}'.format(cfg.SAMPLER))
+
+    val_set = ImageDataset(dataset.query + dataset.gallery, val_transforms)
+
+    val_loader = DataLoader(
+        val_set, batch_size=cfg.TEST.IMS_PER_BATCH, shuffle=False, num_workers=num_workers,
+        collate_fn=val_collate_fn
+    )
+    train_loader_normal = DataLoader(
+        train_set_normal, batch_size=cfg.TEST.IMS_PER_BATCH, shuffle=False, num_workers=num_workers,
+        collate_fn=val_collate_fn
+    )
+    return train_loader, train_loader_normal, val_loader, len(dataset.query), num_classes, cam_num, view_num

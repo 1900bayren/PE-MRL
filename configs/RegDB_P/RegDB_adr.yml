@@ -1,0 +1,89 @@
+MODEL:
+  PRETRAIN_CHOICE: 'imagenet'
+  PRETRAIN_PATH: '/root/code/AMaP/vit_checkpoints/jx_vit_base_p16_224-80ecf9dd.pth'
+  METRIC_LOSS_TYPE: 'triplet'
+  IF_LABELSMOOTH: 'off'
+  IF_WITH_CENTER: 'no'
+  NAME: 'transformer'
+  NO_MARGIN: True
+  DEVICE_ID: ('4')
+  TRANSFORMER_TYPE: 'vit_base_patch16_224_TransReID'
+  STRIDE_SIZE: [12, 12]
+  SIE_CAMERA: True
+  SIE_COE: 3.0
+  JPM: True
+  RE_ARRANGE: True
+#  physical prior
+  USE_PHYS_PRIOR: True
+  PRIOR_DIM_IR: 53
+  PRIOR_DIM_VIS: 52
+# adr
+  USE_ADR: False
+  USE_PROXY_ADR: TRUE
+  # 当前设置为摄像机数目
+  NUM_DOMAINS: 2
+  PROXY_NUM_DOMAINS: 4
+
+INPUT:
+  #SIZE_TRAIN: [384, 144]
+  #SIZE_TEST: [384, 144]
+  SIZE_TRAIN: [256, 128]
+  SIZE_TEST: [256, 128]
+  PROB: 0.5 # random horizontal flip
+  RE_PROB: 0.5 # random erasing
+  PADDING: 10
+  PIXEL_MEAN: [0.5, 0.5, 0.5]
+  PIXEL_STD: [0.5, 0.5, 0.5]
+  AUG: 0
+  #  physical prior
+  PRIORS_ROOT_TRAIN_IR: "/root/code/AMaP/cache/RegDB/Thermal"   # 你的离线脚本 --priors-root
+  PRIORS_ROOT_TRAIN_VIS: "/root/code/AMaP/cache/RegDB/Visible"
+
+
+DATASETS:
+  NAMES: ('regdb_p')
+  ROOT_DIR: ('/root/code/IDKL-main/IDKL/configs/dataset')
+
+DATALOADER:
+  SAMPLER: 'softmax_triplet'
+  NUM_INSTANCE: 4
+  NUM_WORKERS: 8
+
+SOLVER:
+  OPTIMIZER_NAME: 'SGD'
+  MAX_EPOCHS: 120
+  BASE_LR: 0.001
+  IMS_PER_BATCH: 48
+  WARMUP_METHOD: 'linear'
+  LARGE_FC_LR: False
+  CHECKPOINT_PERIOD: 20
+  LOG_PERIOD: 20
+  EVAL_PERIOD: 2
+  WEIGHT_DECAY:  1e-4
+  WEIGHT_DECAY_BIAS: 1e-4
+  BIAS_LR_FACTOR: 2
+  #  physical prior
+  WEIGHT_PHYS: 0.2
+  PHYS_WARMUP_EPOCH: 35
+  W_PHYS_IR: 2.0
+  W_PHYS_VIS: 0.5
+  # adr
+  WEIGHT_ADR: 0.5     # λ_max
+  ADR_RAMP_GAMMA: 10.0
+  ADR_DECAY_START_RATIO: 0.6
+  ADR_ENTROPY_POW: 1.0
+  WEIGHT_ADR_PROXY: 0.3
+  ADR_PROXY_START_RATIO: 0.4
+  ADR_PROXY_ENTROPY_POW: 1.0
+
+TEST:
+  EVAL: True
+  IMS_PER_BATCH: 64
+  RE_RANKING: False
+  WEIGHT: 'logs/regdb_vit_transreid_stride/transformer_120.pth'
+  NECK_FEAT: 'before'
+  FEAT_NORM: 'yes'
+
+OUTPUT_DIR: 'logs/regdb_vit_transreid_stride'
+
+

@@ -1,0 +1,30 @@
+# SYSU-MM01
+
+## all + one
+#python test.py --config_file configs/SYSU-MM/vit_transreid_stride.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_11' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/home/data_4t/ctm/ReID/MIP-master/logs/sysu_WHAT/65.37_92.90_92.90_62.70/transformer_best_25.pth' DATASETS.MODE 'all' DATASETS.SETTING 'one'
+#
+## all + multi
+#python test.py --config_file configs/SYSU-MM/vit_transreid_stride.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_12' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/home/data_4t/ctm/ReID/MIP-master/logs/sysu_WHAT/65.37_92.90_92.90_62.70/transformer_best_25.pth' DATASETS.MODE 'all' DATASETS.SETTING 'multi'
+#
+## indoor + one
+#python test.py --config_file configs/SYSU-MM/vit_transreid_stride.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_21' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/home/data_4t/ctm/ReID/MIP-master/logs/sysu_WHAT/65.37_92.90_92.90_62.70/transformer_best_25.pth' DATASETS.MODE 'indoor' DATASETS.SETTING 'one'
+#
+## indoor + multi
+#python test.py --config_file configs/SYSU-MM/vit_transreid_stride.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_22' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/home/data_4t/ctm/ReID/MIP-master/logs/sysu_WHAT/65.37_92.90_92.90_62.70/transformer_best_25.pth' DATASETS.MODE 'indoor' DATASETS.SETTING 'multi'
+#
+
+
+# SYSU-MM01
+
+# all + one
+python test.py --config_file configs/SYSU-MM/SYSU_prior.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_11' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/root/code/AMaP/logs/sysu_PRIOR/65.13_91.27_96.03_61.07/transformer_best_29.pth' DATASETS.MODE 'all' DATASETS.SETTING 'one'
+
+# all + multi
+python test.py --config_file configs/SYSU-MM/SYSU_prior.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_12' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/root/code/AMaP/logs/sysu_PRIOR/65.13_91.27_96.03_61.07/transformer_best_29.pth' DATASETS.MODE 'all' DATASETS.SETTING 'multi'
+
+# indoor + one
+python test.py --config_file configs/SYSU-MM/SYSU_prior.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_21' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/root/code/AMaP/logs/sysu_PRIOR/65.13_91.27_96.03_61.07/transformer_best_29.pth' DATASETS.MODE 'indoor' DATASETS.SETTING 'one'
+
+# indoor + multi
+python test.py --config_file configs/SYSU-MM/SYSU_prior.yml MODEL.DEVICE_ID "('0')" OUTPUT_DIR 'logs/test_22' INPUT.AUG 2 INPUT.SIZE_TRAIN [256,128] INPUT.SIZE_TEST [256,128] MODEL.USE_PROMPT True MODEL.NUM_TOKEN 16 MODEL.USE_INS_PROMPT True MODEL.USE_INS_PROMPT_GEN True MODEL.NUM_INS_PMT_TOKEN 16 TEST.WEIGHT '/root/code/AMaP/logs/sysu_PRIOR/65.13_91.27_96.03_61.07/transformer_best_29.pth' DATASETS.MODE 'indoor' DATASETS.SETTING 'multi'
+

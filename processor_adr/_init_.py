@@ -1,0 +1,1 @@
+from processor_prior.processor import do_train, do_inference
