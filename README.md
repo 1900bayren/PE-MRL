@@ -27,36 +27,10 @@ bash eval_regdb.sh
 
 # Evaluate on SYSU-MM01
 bash eval_sysu.sh
-📁 Project Structure
-plaintext
-.
-├── model/          # Model definitions
-├── processor/      # Data processing modules
-├── processor_adr/  # ADR-based data processing
-├── processor_prior/ # Prior-based data processing
-├── solver/         # Optimization and training logic
-├── utils/          # Utility functions
-├── .gitattributes
-├── LICENSE
-├── README.md
-├── adr.sh
-├── eval_llcm.sh
-├── eval_regdb.sh
-├── eval_sysu.sh
-├── grad.py
-├── grad_cam.py
-├── multi_para.sh
-├── para.sh
-├── regdb_p.sh
-├── requirements.txt
-├── run_for.sh
-├── test.py
-├── train.py
-├── train.sh
-├── train_adr.py
-├── train_prior.py
-└── vis.py
-📝 Citation
+
+
+
+# Citation
 If you find this work useful for your research, please consider citing our paper:
 bibtex
 @article{PE-MRL2026,
